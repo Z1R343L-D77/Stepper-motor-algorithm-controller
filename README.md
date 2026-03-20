@@ -262,6 +262,7 @@ Copyright (c) 2025, Artery Technology, All rights reserved.
 本项目参考了以下开源项目：
 
 - [ZheWana/2023-Work-training-competition-software](https://github.com/ZheWana/2023-Work-training-competition-software/tree/master/Controler/UserCode/StepHelper) - 步进电机算法核心实现
+- 本项目的HAL库形式可参考如上链接
 
 ## 作者
 
