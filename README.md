@@ -1,5 +1,5 @@
 # Stepper-motor-algorithm-controller
-
+采用定时器PWM输出通道模式+DMA传输
 基于ZheWana固件库的步进电机算法控制驱动，支持AT32系列微控制器的高精度步进电机控制。
 
 ## 功能特性
