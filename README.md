@@ -223,7 +223,9 @@ while(1)
 ## 运行效果
 
 使用saleae logic 捕捉波形并导出digit.csv波形，使用我提供的matlab脚本分析波形,即可查看频率波形。
-
+该效果代码为
+  Step_Init(&step2,TMR2,TMR_SELECT_CHANNEL_2,GPIOB,GPIO_PINS_1,2000,8000,100);
+  step_move_start_pwm_fixed(&step2, 12000, 4000, 4000, 4000, 1);
 ![image](https://github.com/Z1R343L-D77/Stepper-motor-algorithm-controller/blob/main/img/curve.png?raw=true)
 
 ## 示例代码
