@@ -220,6 +220,12 @@ while(1)
 | `Step_FillConstantFixed()`   | 填充匀速阶段脉冲（固定分段模式） |
 | `Step_FillDecelerateFixed()` | 填充减速阶段脉冲（固定分段模式） |
 
+## 运行效果
+
+使用saleae logic 捕捉波形并导出digit.csv波形，使用我提供的matlab脚本分析波形,即可查看频率波形。
+
+![](C:\window_apps\desktop\GithubDesktop\Stepper-motor-algorithm-controller\img\curve.png)
+
 ## 示例代码
 
 完整示例参见 `main.c`：
@@ -304,6 +310,7 @@ Z1R343L
 
 ## 版本历史
 
+- v1.2.1 - 新增分析频率曲线的matlab脚本，配合saleae logic 2与逻辑分析仪使用 
 - v1.2.0 - 优化os\_step\_move\_scan函数，简化电机启动流程，采取DMA中断填充Step_BuffFill函数，以防止脉冲丢失
 - v1.1.0 - 新增固定脉冲分段模式，支持精确控制加速/匀速/减速各阶段脉冲数
 - v1.0.0 - 初始版本，支持梯形/S曲线加速和DMA双缓冲
