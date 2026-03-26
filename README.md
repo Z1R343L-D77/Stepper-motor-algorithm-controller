@@ -1,16 +1,18 @@
 # Stepper-motor-algorithm-controller
+
 采用定时器PWM输出通道模式+DMA传输
 基于ZheWana固件库的步进电机算法控制驱动，支持AT32系列微控制器的高精度步进电机控制。
 
 ## 功能特性
 
+- **双模式控制**：支持Tacc自动规划模式和固定脉冲分段模式
 - **多曲线加速算法**：支持梯形曲线和S曲线两种加速模式
 - **DMA双缓冲技术**：采用双缓冲区机制，确保脉冲输出的连续性和实时性
 - **三阶段速度控制**：完整的加速、匀速、减速控制流程
 - **多电机独立控制**：支持同时控制多个步进电机，每个电机独立配置
 - **硬件PWM驱动**：利用定时器PWM输出配合DMA，实现高精度脉冲生成
 - **方向控制**：支持正反向旋转控制
-- **可配置参数**：最小/最大频率、加速时间等参数可灵活配置
+- **可配置参数**：最小/最大频率、加速时间、分段脉冲数等参数可灵活配置
 
 ## 硬件要求
 
@@ -52,6 +54,16 @@ graph TB
 ```
 
 ## 核心算法
+
+### 控制模式
+
+**Tacc自动规划模式**
+
+根据加速时间Tacc自动计算加速步数，适用于需要基于时间控制的场景。
+
+**固定脉冲分段模式**
+
+直接指定加速/匀速/减速三段的脉冲数量，适用于需要精确控制各阶段步数的场景。
 
 ### 速度曲线
 
@@ -131,7 +143,7 @@ sequenceDiagram
 ### 1. 初始化硬件
 
 ```c
-bsp_step_init();  // 初始化步进电机GPIO
+bsp_step_init();  // 初始化步进电机GPIO、定时器和DMA
 ```
 
 ### 2. 配置步进电机
@@ -149,11 +161,24 @@ Step_Init(&step2,                         // 电机句柄
 
 ### 3. 启动电机
 
+**Tacc自动规划模式**
+
 ```c
 step_move_start_pwm(&step2,              // 电机句柄
                     6400,                // 目标步数
-                    DIR_LEFT,            // 方向 (0:正向, 1:反向)
+                    DIR_RIGHT,           // 方向 (1:正向, 0:反向)
                     Decelerate_USE);     // 是否使用减速
+```
+
+**固定脉冲分段模式**
+
+```c
+step_move_start_pwm_fixed(&step2,        // 电机句柄
+                          6400,          // 总脉冲数
+                          1400,          // 加速脉冲数
+                          3600,          // 匀速脉冲数
+                          1400,          // 减速脉冲数
+                          DIR_RIGHT);    // 方向 (1:正向, 0:反向)
 ```
 
 ### 4. 主循环扫描
@@ -169,25 +194,29 @@ while(1)
 
 ### 核心函数
 
-| 函数名                             | 功能描述         |
-| ------------------------------- | ------------ |
-| `Step_Init()`                   | 初始化步进电机控制结构体 |
-| `Step_Prefill()`                | 预填充缓冲区，启动电机  |
-| `Step_BuffFill()`               | 运行时填充缓冲区     |
-| `Step_BufferUsed()`             | 缓冲区使用完成回调    |
-| `Step_Abort()`                  | 中止电机运行       |
-| `Step_Lock()` / `Step_Unlock()` | 锁定/解锁电机控制    |
+| 函数名                             | 功能描述                |
+| ------------------------------- | ------------------- |
+| `Step_Init()`                   | 初始化步进电机控制结构体        |
+| `Step_Prefill()`                | 预填充缓冲区，启动电机（Tacc模式） |
+| `Step_PrefillFixed()`           | 预填充缓冲区，启动电机（固定分段模式） |
+| `Step_BuffFill()`               | 运行时填充缓冲区            |
+| `Step_BufferUsed()`             | 缓冲区使用完成回调           |
+| `Step_Abort()`                  | 中止电机运行              |
+| `Step_Lock()` / `Step_Unlock()` | 锁定/解锁电机控制           |
 
 ### 辅助函数
 
-| 函数名                     | 功能描述      |
-| ----------------------- | --------- |
-| `Step_IsBuffRdy()`      | 检查缓冲区是否就绪 |
-| `Step_GetCurBuffer()`   | 获取当前缓冲区指针 |
-| `Step_BuffUsedLength()` | 获取缓冲区使用长度 |
-| `Step_FillAccelerate()` | 填充加速阶段脉冲  |
-| `Step_FillConstant()`   | 填充匀速阶段脉冲  |
-| `Step_FillDecelerate()` | 填充减速阶段脉冲  |
+| 函数名                          | 功能描述             |
+| ---------------------------- | ---------------- |
+| `Step_IsBuffRdy()`           | 检查缓冲区是否就绪        |
+| `Step_GetCurBuffer()`        | 获取当前缓冲区指针        |
+| `Step_BuffUsedLength()`      | 获取缓冲区使用长度        |
+| `Step_FillAccelerate()`      | 填充加速阶段脉冲（Tacc模式） |
+| `Step_FillConstant()`        | 填充匀速阶段脉冲（Tacc模式） |
+| `Step_FillDecelerate()`      | 填充减速阶段脉冲（Tacc模式） |
+| `Step_FillAccelerateFixed()` | 填充加速阶段脉冲（固定分段模式） |
+| `Step_FillConstantFixed()`   | 填充匀速阶段脉冲（固定分段模式） |
+| `Step_FillDecelerateFixed()` | 填充减速阶段脉冲（固定分段模式） |
 
 ## 示例代码
 
@@ -201,9 +230,11 @@ int main(void)
     Step_Init(&step2, TMR2, TMR_SELECT_CHANNEL_2, GPIOB, GPIO_PINS_1, 500, 8000, 500);
     Step_Init(&step3, TMR5, TMR_SELECT_CHANNEL_3, GPIOA, GPIO_PINS_3, 500, 8000, 500);
     
-    // 启动电机
-    step_move_start_pwm(&step2, 6400, DIR_LEFT, Decelerate_USE);
-    step_move_start_pwm(&step3, 32000, DIR_LEFT, Decelerate_USE);
+    // Tacc自动规划模式启动
+    step_move_start_pwm(&step2, 6400, DIR_RIGHT, Decelerate_USE);
+    
+    // 固定脉冲分段模式启动
+    step_move_start_pwm_fixed(&step3, 32000, 5000, 22000, 5000, DIR_RIGHT);
     
     // 主循环
     while(1)
@@ -217,15 +248,16 @@ int main(void)
 
 ```
 Stepper-motor-algorithm-controller/
-├── bsp/
-│   ├── bsp_step.c      # 硬件抽象层实现
-│   └── bsp_step.h      # 硬件抽象层头文件
-├── drv/
-│   ├── drv_step.c      # 算法驱动层实现
-│   └── drv_step.h      # 算法驱动层头文件
-├── main.c              # 主程序示例
-├── README.md           # 项目说明文档
-└── LICENSE             # 许可证文件
+├── code/    
+│   ├── bsp/
+│   │    ├── bsp_step.c  # 硬件抽象层实现
+│   │    └── bsp_step.h  # 硬件抽象层头文件
+│   ├── drv/
+│   │    ├── drv_step.c  # 算法驱动层实现
+│   │    └── drv_step.h  # 算法驱动层头文件
+│   └── main.c           # 主程序示例
+├── README.md            # 项目说明文档
+└── LICENSE              # 许可证文件
 ```
 
 ## 技术参数
@@ -270,5 +302,6 @@ Z1R343L
 
 ## 版本历史
 
+- v1.1.0 - 新增固定脉冲分段模式，支持精确控制加速/匀速/减速各阶段脉冲数
 - v1.0.0 - 初始版本，支持梯形/S曲线加速和DMA双缓冲
 

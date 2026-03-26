@@ -39,9 +39,10 @@ int main(void)
   //***** step start*******//
   bsp_step_init();                                                                /* 初始化步进电机GPIO */
   Step_Init(&step2,TMR2,TMR_SELECT_CHANNEL_2,GPIOB,GPIO_PINS_1,500,8000,500);     /* 步进电机配置初始化 */
-  Step_Init(&step3,TMR5,TMR_SELECT_CHANNEL_3,GPIOA,GPIO_PINS_3,500,8000,500);     /* 步进电机初始化 */
-  step_move_start_pwm(&step2, 6400,DIR_LEFT,Decelerate_USE);
-  step_move_start_pwm(&step3, 32000,DIR_LEFT,Decelerate_USE);
+  /* for example ：*/
+  step_move_start_pwm(&step2, 6400,DIR_RIGHT,Decelerate_USE);                     /* 启动步进电机PWM运行 */
+  /* for example ：*/
+  step_move_start_pwm_fixed(&step2, 6400, 1400, 4000, 1000, DIR_RIGHT);           /* 启动固定脉冲分段模式的步进电机PWM运行 */
   //***** step end*******//
   while(1)
   {
@@ -98,5 +99,27 @@ void step_move_start_pwm(stepTypedef *hstep, uint32_t stepToGo, uint8_t dir, uin
     else if(hstep == &step3)
     {
         step3.flag = 1;
+    }
+}
+
+/**
+ * @brief 启动固定脉冲分段模式的步进电机 PWM 运行
+ * @param hstep 步进电机控制句柄指针
+ * @param totalPulse 总脉冲数
+ * @param accPulse 加速脉冲数
+ * @param constPulse 匀速脉冲数
+ * @param decPulse 减速脉冲数
+ * @param dir 方向    1: 正向  0: 反向
+ */
+void step_move_start_pwm_fixed(stepTypedef *hstep,
+                               uint32_t totalPulse,
+                               uint32_t accPulse,
+                               uint32_t constPulse,
+                               uint32_t decPulse,
+                               uint8_t dir)
+{
+    if (Step_PrefillFixed(hstep, totalPulse, accPulse, constPulse, decPulse, dir) >= 0)
+    {
+        hstep->flag = 1;
     }
 }

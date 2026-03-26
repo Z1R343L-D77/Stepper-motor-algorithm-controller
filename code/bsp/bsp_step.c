@@ -28,7 +28,6 @@ void Step_DMA_IRQHandler(stepTypedef *hstep)
     else                      /* 已运动到目标脉冲数量 */
     { 
       Step_Abort(hstep);    /* 步进电机强制停止 */
-      Step_Unlock(&step3);  /* 解锁，允许中断控制 */
       step3_move_isr();     /* 触发中断控制 */
     }
   }else if (hstep == &step2) 
@@ -39,8 +38,7 @@ void Step_DMA_IRQHandler(stepTypedef *hstep)
     }
     else                      /* 已运动到目标脉冲数量 */
     { 
-      Step_Abort(hstep);    /* 步进电机强制停止 */
-      Step_Unlock(&step2);  /* 解锁，允许中断控制 */      
+      Step_Abort(hstep);    /* 步进电机强制停止 */   
       step2_move_isr();     /* 触发中断控制 */
     }
   }

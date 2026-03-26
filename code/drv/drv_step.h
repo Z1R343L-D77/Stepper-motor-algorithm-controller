@@ -8,20 +8,26 @@
 #define STEPHELPER_H
 
 #include "stdint.h"
-
+#include "at32f403a_407.h"
+#include "at32f403a_407_tmr.h"
+#include "at32f403a_407_gpio.h"
 
 /*********************  Config Option Begin  ********************/
 #ifndef RCC_MAX_FREQUENCY
 #define RCC_MAX_FREQUENCY 240000000         /**< 系统时钟最大频率 (Hz) */
 #endif
-#define AutoInitBuffer (1)                  /*< 是否自动初始化缓冲区 (0-关闭，1-开启) */
-#define AcclerateCurve (Curve_Trapezoidal)  /*< 加速曲线类型 (梯形/S 曲线) */
-#define BufferSize (512)                    /*< 双缓冲区大小 (脉冲数量) */    
+
+#define AutoInitBuffer        (1)                    /*< 是否自动初始化缓冲区 (0-关闭，1-开启) */
+#define AcclerateCurve        (Curve_Trapezoidal)    /*< 加速曲线类型 (梯形/S 曲线) */
+#define BufferSize            (512)                  /*< 双缓冲区大小 (脉冲数量) */
 /*********************  Config Option End  ********************/
-#define Decelerate_USE (1U)             /*< 启用减速标志 */
-#define Decelerate_NOUSE (0U)           /*< 禁用减速标志 */
-#define Curve_Trapezoidal (0x01)        /*< 梯形速度曲线 */
-#define Curve_S (0x02)                  /*< S 形速度曲线 */    
+
+#define Decelerate_USE        (1U)                   /*< 启用减速标志 */
+#define Decelerate_NOUSE      (0U)                   /*< 禁用减速标志 */
+
+#define Curve_Trapezoidal     (0x01)                 /*< 梯形速度曲线 */
+#define Curve_S               (0x02)                 /*< S 形速度曲线 */
+
 /**
  * @brief 步进电机控制结构体
  * @details 包含定时器、GPIO、速度参数、双缓冲区及状态信息
@@ -36,7 +42,7 @@ typedef struct stepTypedef
 
     float Fmin;                       /*< 最小频率 (Hz) */
     float Fmax;                       /*< 最大频率 (Hz) */
-    float Tacc;                       /*< 加速时间 (ms) */
+    float Tacc;                       /*< 加速时间 (ms)，保留原接口兼容 */
 
     float t;                          /*< 当前时间 (ms) */
     float Fcur;                       /*< 当前频率 (Hz) */
@@ -47,28 +53,42 @@ typedef struct stepTypedef
     /** @brief 填充状态枚举 */
     enum fillState
     {
-        Acclerate,    /*< 加速阶段 */
-        Constant,     /*< 匀速阶段 */
-        Decelerate,   /*< 减速阶段 */
-        Stop          /*< 停止状态 */
+        Acclerate = 0,   /*< 加速阶段 */
+        Constant,        /*< 匀速阶段 */
+        Decelerate,      /*< 减速阶段 */
+        Stop             /*< 停止状态 */
     } state;
 
     /** @brief 运行锁枚举 */
     enum runningLock
     {
-        UNLOCK,       /*< 未锁定 */ 
-        LOCK          /*< 已锁定 */
+        UNLOCK = 0,      /*< 未锁定 */
+        LOCK             /*< 已锁定 */
     } lock;
 
     uint32_t stepToGo;                /*< 剩余步数 */
     uint32_t buffToUse;               /*< 缓冲区使用长度 */
-    uint32_t accStep;                 /*< 加速阶段所需步数 */
+    uint32_t accStep;                 /*< 按Tacc推导的加速步数 */
+    uint32_t pos;                     /*< 当前步数（位置） */
 
-    uint8_t useDec : 1;               /*< 是否使用减速 (1 位域) */
-    uint8_t buffIndex : 1;            /*< 当前缓冲区索引 (1 位域) */
-    uint8_t buffRdy : 1;              /*< 缓冲区就绪标志 (1 位域) */
+    /**************** 新增：固定分段控制参数 ****************/
+    uint32_t totalPulse;              /*< 本次运动总脉冲数 */
+    uint32_t accPulse;                /*< 加速段脉冲数 */
+    uint32_t constPulse;              /*< 匀速段脉冲数 */
+    uint32_t decPulse;                /*< 减速段脉冲数 */
 
-    uint8_t flag : 1;                 /*< 通用标志位 (1 位域，易失) */   
+    uint32_t accCount;                /*< 已输出加速段脉冲数 */
+    uint32_t constCount;              /*< 已输出匀速段脉冲数 */
+    uint32_t decCount;                /*< 已输出减速段脉冲数 */
+    /******************************************************/
+
+    uint8_t useDec : 1;               /*< 是否使用减速 */
+    uint8_t buffIndex : 1;            /*< 当前缓冲区索引 */
+    uint8_t buffRdy : 1;              /*< 缓冲区就绪标志 */
+    uint8_t dir : 1;                  /*< 方向 */
+    uint8_t motionMode : 1;           /*< 运动模式 (0: normal, 1: cam) */
+    volatile uint8_t flag : 1;        /*< 通用标志位 */
+    uint8_t fixedMode : 1;            /*< 0: 原始Tacc模式，1: 固定脉冲段模式 */
 
 } stepTypedef;
 
@@ -124,7 +144,6 @@ uint32_t Step_BuffUsedLength(stepTypedef *hstep);
  * @brief 锁定步进电机控制
  * @param hstep 步进电机控制句柄指针
  * @return 0-成功，-1-已锁定
- * @details 防止并发修改控制参数
  */
 int Step_Lock(stepTypedef *hstep);
 
@@ -143,14 +162,33 @@ int Step_Unlock(stepTypedef *hstep);
 void Step_Abort(stepTypedef *hstep);
 
 /**
- * @brief 预填充缓冲区，启动步进电机
+ * @brief 预填充缓冲区，启动步进电机（Tcc 自动规划模式）
  * @param hstep 步进电机控制句柄指针
  * @param stepToGo 目标步数
  * @param dir 方向 (1-正，0-反)
  * @param useDec 是否使用减速 (1-是，0-否)
  * @return 填充的脉冲数量
+ * @note 该接口沿用Tacc 自动规划模式
  */
 int Step_Prefill(stepTypedef *hstep, int stepToGo, uint8_t dir, uint8_t useDec);
+
+/**
+ * @brief 预填充缓冲区，启动步进电机（固定脉冲分段模式）
+ * @param hstep 步进电机控制句柄指针
+ * @param totalPulse 总脉冲数
+ * @param accPulse 加速段脉冲数
+ * @param constPulse 匀速段脉冲数
+ * @param decPulse 减速段脉冲数
+ * @param dir 方向 (1-正，0-反)
+ * @return 填充的脉冲数量，-1-参数错误
+ * @note 例如：6400 = 2200 + 2000 + 2200
+ */
+int Step_PrefillFixed(stepTypedef *hstep,
+                      uint32_t totalPulse,
+                      uint32_t accPulse,
+                      uint32_t constPulse,
+                      uint32_t decPulse,
+                      uint8_t dir);
 
 /**
  * @brief 根据当前状态填充缓冲区
@@ -161,25 +199,45 @@ int Step_Prefill(stepTypedef *hstep, int stepToGo, uint8_t dir, uint8_t useDec);
 int Step_BuffFill(stepTypedef *hstep);
 
 /**
- * @brief 填充减速阶段脉冲缓冲区
+ * @brief 填充减速阶段脉冲缓冲区（Tacc 自动规划模式）
  * @param hstep 步进电机控制句柄指针
  * @return 填充的脉冲数量
  */
 int Step_FillDecelerate(stepTypedef *hstep);
 
 /**
- * @brief 填充匀速阶段脉冲缓冲区
+ * @brief 填充匀速阶段脉冲缓冲区（Tcc 自动规划模式）
  * @param hstep 步进电机控制句柄指针
  * @return 填充的脉冲数量
  */
 int Step_FillConstant(stepTypedef *hstep);
 
 /**
- * @brief 填充加速阶段脉冲缓冲区
+ * @brief 填充加速阶段脉冲缓冲区（Tcc 自动规划模式）
  * @param hstep 步进电机控制句柄指针
  * @return 填充的脉冲数量
  */
 int Step_FillAccelerate(stepTypedef *hstep);
 
+/**
+ * @brief 填充加速阶段脉冲缓冲区（固定分段模式）
+ * @param hstep 步进电机控制句柄指针
+ * @return 填充的脉冲数量
+ */
+int Step_FillAccelerateFixed(stepTypedef *hstep);
+
+/**
+ * @brief 填充匀速阶段脉冲缓冲区（固定分段模式）
+ * @param hstep 步进电机控制句柄指针
+ * @return 填充的脉冲数量
+ */
+int Step_FillConstantFixed(stepTypedef *hstep);
+
+/**
+ * @brief 填充减速阶段脉冲缓冲区（固定分段模式）
+ * @param hstep 步进电机控制句柄指针
+ * @return 填充的脉冲数量
+ */
+int Step_FillDecelerateFixed(stepTypedef *hstep);
 
 #endif
