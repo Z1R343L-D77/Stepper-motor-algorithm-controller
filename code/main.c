@@ -63,9 +63,7 @@ void os_step_move_scan(void)
         if(Step_IsBuffRdy(&step2))
         {
             tmr_pwm_start_dma(step2.tmr, step2.channel, (uint16_t *)Step_GetCurBuffer(&step2), Step_BuffUsedLength(&step2));
-            Step_BufferUsed(&step2);
         }
-        Step_BuffFill(&step2);
         step2.flag = 0;
     }
 
@@ -74,9 +72,7 @@ void os_step_move_scan(void)
         if(Step_IsBuffRdy(&step3))
         {
             tmr_pwm_start_dma(step3.tmr, step3.channel, (uint16_t *)Step_GetCurBuffer(&step3), Step_BuffUsedLength(&step3));
-            Step_BufferUsed(&step3);
         }
-        Step_BuffFill(&step3);
         step3.flag = 0;
     }
 }

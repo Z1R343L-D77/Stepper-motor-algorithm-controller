@@ -55,6 +55,14 @@ void DMA1_Channel6_IRQHandler(void)
   {
     dma_flag_clear(DMA1_FDT6_FLAG);
     Step_DMA_IRQHandler(&step2);
+    /* 缓冲区使用完毕，切换缓冲区 */
+    Step_BufferUsed(&step2);
+    /* 如果状态不是停止，继续填充缓冲区 */
+    if(step2.state != Stop)
+    {
+      Step_BuffFill(&step2);
+      step2.flag = 1;
+    }
   }
 }
 
@@ -69,6 +77,14 @@ void DMA1_Channel7_IRQHandler(void)
   {
     dma_flag_clear(DMA1_FDT7_FLAG);
     Step_DMA_IRQHandler(&step3);
+    /* 缓冲区使用完毕，切换缓冲区 */
+    Step_BufferUsed(&step3);
+    /* 如果状态不是停止，继续填充缓冲区 */
+    if(step3.state != Stop)
+    {
+      Step_BuffFill(&step3);
+      step3.flag = 1;
+    }
   }
 }
 
