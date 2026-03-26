@@ -224,7 +224,7 @@ while(1)
 
 使用saleae logic 捕捉波形并导出digit.csv波形，使用我提供的matlab脚本分析波形,即可查看频率波形。
 
-![](C:\window_apps\desktop\GithubDesktop\Stepper-motor-algorithm-controller\img\curve.png)
+![image](https://github.com/Z1R343L-D77/Stepper-motor-algorithm-controller/tree/main/img/curve.png)
 
 ## 示例代码
 
