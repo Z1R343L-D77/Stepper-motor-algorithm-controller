@@ -1,322 +1,290 @@
-# Stepper-motor-algorithm-controller
+# Stepper Motor Algorithm Controller
 
-采用定时器PWM输出通道模式+DMA传输
-基于ZheWana固件库的步进电机算法控制驱动，支持AT32系列微控制器的高精度步进电机控制。
+基于定时器 PWM 输出和 DMA 传输的步进电机脉冲控制器。项目核心代码面向 AT32F403A/407 标准外设库，实现了步进电机梯形曲线 / S 曲线加减速、PWM+DMA 双缓冲连续输出，以及按固定脉冲段规划运动的控制接口。
 
-## 功能特性
+仓库同时提供 AT32F403ARGT7 与 STM32F407VGT6 示例工程，便于在不同 MCU 平台上验证和移植。
 
-- **双模式控制**：支持Tacc自动规划模式和固定脉冲分段模式
-- **多曲线加速算法**：支持梯形曲线和S曲线两种加速模式
-- **DMA双缓冲技术**：采用双缓冲区机制，确保脉冲输出的连续性和实时性
-- **三阶段速度控制**：完整的加速、匀速、减速控制流程
-- **多电机独立控制**：支持同时控制多个步进电机，每个电机独立配置
-- **硬件PWM驱动**：利用定时器PWM输出配合DMA，实现高精度脉冲生成
-- **方向控制**：支持正反向旋转控制
-- **可配置参数**：最小/最大频率、加速时间、分段脉冲数等参数可灵活配置
+## 功能特点
 
-## 硬件要求
+- 支持两种运动规划方式：按加速时间 `Tacc` 自动规划，或手动指定加速、匀速、减速三段脉冲数。
+- 支持梯形曲线与 S 曲线两种速度曲线。
+- 使用定时器 PWM 输出脉冲，DMA 持续更新定时器分频值，实现运行中变频。
+- 双缓冲区填充机制，降低主循环阻塞对脉冲连续性的影响。
+- 支持多电机实例，每个电机拥有独立的定时器、通道、方向 GPIO 和运动状态。
+- 提供 MATLAB 频率曲线分析脚本，可配合逻辑分析仪导出的 CSV 验证输出效果。
 
-- **微控制器**：AT32F403ARGT7
-- **系统时钟**：最高支持240MHz
-- **外设要求**：
-  - 定时器（TIM2/TIM5等）
-  - GPIO（用于方向控制）
-  - DMA（用于PWM脉冲传输）
+## 仓库结构
 
-## 软件架构
-
-```mermaid
-graph TB
-    subgraph APP["应用层 Application Layer"]
-        A1[main.c<br/>用户应用]
-    end
-    
-    subgraph BSP["硬件抽象层 BSP Layer"]
-        B1[bsp_step.c/h]
-        B2[GPIO初始化]
-        B3[定时器PWM+DMA配置]
-        B4[中断处理]
-    end
-    
-    subgraph DRV["驱动层 Driver Layer"]
-        C1[drv_step.c/h]
-        C2[速度曲线计算]
-        C3[双缓冲区管理]
-        C4[状态机控制]
-    end
-    
-    APP --> BSP
-    BSP --> DRV
-    
-    style APP fill:#e1f5ff,stroke:#01579b,stroke-width:2px
-    style BSP fill:#fff3e0,stroke:#e65100,stroke-width:2px
-    style DRV fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+```text
+Stepper-motor-algorithm-controller/
+├─ code/
+│  ├─ bsp/
+│  │  ├─ bsp_step.c       # AT32 硬件适配层：GPIO、TMR、DMA、中断
+│  │  └─ bsp_step.h
+│  ├─ drv/
+│  │  ├─ drv_step.c       # 步进电机运动规划与双缓冲填充
+│  │  └─ drv_step.h
+│  └─ main.c              # 最小使用示例
+├─ example/
+│  ├─ AT32F403ARGT7/      # AT32 完整 Keil 示例工程
+│  └─ STM32F407VGT6/      # STM32F407 HAL 示例工程
+├─ img/
+│  └─ curve.png           # 输出频率曲线示例图
+├─ matlab/
+│  ├─ digital.csv         # 示例采样数据
+│  └─ frequency_curve.m   # 频率曲线分析脚本
+├─ LICENSE
+└─ README.md
 ```
 
-## 核心算法
+## 核心原理
 
-### 控制模式
+驱动层把目标速度曲线转换为一组定时器分频值，并写入双缓冲区。DMA 以 memory-to-peripheral 模式把缓冲区中的分频值写入定时器分频寄存器，使 PWM 输出频率随运动阶段变化。
 
-**Tacc自动规划模式**
+运行流程如下：
 
-根据加速时间Tacc自动计算加速步数，适用于需要基于时间控制的场景。
+```text
+Step_Init()
+  -> 配置电机对象、速度参数、方向 GPIO、PWM 占空比
 
-**固定脉冲分段模式**
+Step_Prefill() / Step_PrefillFixed()
+  -> 根据运动参数预填充第一个脉冲缓冲区
 
-直接指定加速/匀速/减速三段的脉冲数量，适用于需要精确控制各阶段步数的场景。
+tmr_pwm_start_dma()
+  -> 启动定时器 PWM 和 DMA
 
-### 速度曲线
+DMA 完成中断
+  -> Step_BufferUsed()
+  -> Step_BuffFill()
+  -> 标记下一段缓冲区可发送
 
-**梯形曲线（Trapezoidal）**
-
-```mermaid
-graph LR
-    A[加速阶段<br/>线性加速] --> B[匀速阶段<br/>最大速度]
-    B --> C[减速阶段<br/>线性减速]
-    
-    style A fill:#ffeb3b,stroke:#f57c00,stroke-width:2px
-    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px
-    style C fill:#ff9800,stroke:#e65100,stroke-width:2px
+主循环 os_step_move_scan()
+  -> 检查缓冲区状态
+  -> 继续启动下一段 DMA 传输
 ```
 
-**S曲线（S-Curve）**
+## 速度曲线
 
-```mermaid
-graph LR
-    A[加速阶段<br/>平滑加速] --> B[匀速阶段<br/>最大速度]
-    B --> C[减速阶段<br/>平滑减速]
-    
-    style A fill:#64b5f6,stroke:#1976d2,stroke-width:2px
-    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px
-    style C fill:#81c784,stroke:#388e3c,stroke-width:2px
-```
+### 梯形曲线
 
-**曲线对比**
+梯形曲线采用线性加速、匀速、线性减速。计算简单，适合对平滑性要求不高、追求实现成本低的场景。
 
-| 特性    | 梯形曲线 | S曲线  |
-| ----- | ---- | ---- |
-| 加速度变化 | 阶跃变化 | 连续平滑 |
-| 机械冲击  | 较大   | 较小   |
-| 运动平滑性 | 一般   | 优秀   |
-| 计算复杂度 | 低    | 中    |
-| 适用场景  | 高速定位 | 精密运动 |
+### S 曲线
 
-### 双缓冲机制
+S 曲线使用余弦函数平滑加减速，可减少机械冲击，更适合负载较大或需要柔顺启停的运动场景。
 
-```mermaid
-sequenceDiagram
-    participant CPU
-    participant Buffer0
-    participant Buffer1
-    participant DMA
-    participant Timer
-    
-    Note over CPU,Timer: 初始阶段
-    CPU->>Buffer0: 填充脉冲数据
-    CPU->>Buffer1: 填充脉冲数据
-    
-    Note over CPU,Timer: 运行阶段
-    DMA->>Buffer0: 读取数据
-    Timer->>DMA: 输出PWM脉冲
-    CPU->>Buffer1: 填充新数据
-    
-    DMA->>Buffer1: 切换读取
-    Timer->>DMA: 输出PWM脉冲
-    CPU->>Buffer0: 填充新数据
-    
-    Note over CPU,Timer: 乒乓交替，持续运行
-```
-
-## 配置选项
-
-在 `drv_step.h` 中可配置以下参数：
+在 `code/drv/drv_step.h` 中修改：
 
 ```c
-#define RCC_MAX_FREQUENCY  240000000      // 系统时钟频率 (Hz)
-#define AutoInitBuffer    (1)            // 自动初始化缓冲区
-#define AcclerateCurve    Curve_Trapezoidal  // 加速曲线类型
-#define BufferSize        (512)          // 双缓冲区大小
+#define AcclerateCurve (Curve_Trapezoidal)
+/* 或 */
+#define AcclerateCurve (Curve_S)
 ```
 
-## 使用方法
+## 主要配置
 
-### 1. 初始化硬件
+配置项位于 `code/drv/drv_step.h`：
 
 ```c
-bsp_step_init();  // 初始化步进电机GPIO、定时器和DMA
+#ifndef RCC_MAX_FREQUENCY
+#define RCC_MAX_FREQUENCY 240000000
+#endif
+
+#define AutoInitBuffer (1)
+#define AcclerateCurve (Curve_Trapezoidal)
+#define BufferSize     (512)
 ```
 
-### 2. 配置步进电机
+| 配置项                | 说明                                                 |
+| --------------------- | ---------------------------------------------------- |
+| `RCC_MAX_FREQUENCY` | 定时器输入时钟频率，需按实际 MCU 时钟配置修改        |
+| `AutoInitBuffer`    | 是否在初始化时清零双缓冲区                           |
+| `AcclerateCurve`    | 加减速曲线类型：`Curve_Trapezoidal` 或 `Curve_S` |
+| `BufferSize`        | 单个缓冲区可容纳的脉冲数                             |
+
+## 快速上手
+
+### 1. 初始化 BSP
 
 ```c
-Step_Init(&step2,                         // 电机句柄
-          TMR2,                           // 定时器
-          TMR_SELECT_CHANNEL_2,           // 定时器通道
-          GPIOB,                          // GPIO端口
-          GPIO_PINS_1,                    // GPIO引脚
-          500,                            // 最小频率 (Hz)
-          8000,                           // 最大频率 (Hz)
-          500);                           // 加速时间 (ms)
+bsp_step_init();
 ```
 
-### 3. 启动电机
+该函数完成方向 GPIO、定时器 PWM、DMA 和 DMA 中断初始化。移植到新硬件时，优先修改 `code/bsp/bsp_step.c`。
 
-**Tacc自动规划模式**
+### 2. 初始化电机对象
 
 ```c
-step_move_start_pwm(&step2,              // 电机句柄
-                    6400,                // 目标步数
-                    DIR_RIGHT,           // 方向 (1:正向, 0:反向)
-                    Decelerate_USE);     // 是否使用减速
+Step_Init(&step2,
+          TMR2,
+          TMR_SELECT_CHANNEL_2,
+          GPIOB,
+          GPIO_PINS_1,
+          500,
+          8000,
+          500);
 ```
 
-**固定脉冲分段模式**
+参数含义：
+
+| 参数                     | 说明                  |
+| ------------------------ | --------------------- |
+| `hstep`                | 电机控制对象          |
+| `tmr`                  | 输出 PWM 的定时器     |
+| `channel`              | 定时器通道            |
+| `GPIOx` / `GPIO_Pin` | 方向控制 GPIO         |
+| `Fmin`                 | 最小脉冲频率，单位 Hz |
+| `Fmax`                 | 最大脉冲频率，单位 Hz |
+| `Tacc`                 | 加速时间，单位 ms     |
+
+### 3. 启动运动
+
+按 `Tacc` 自动规划：
 
 ```c
-step_move_start_pwm_fixed(&step2,        // 电机句柄
-                          6400,          // 总脉冲数
-                          1400,          // 加速脉冲数
-                          3600,          // 匀速脉冲数
-                          1400,          // 减速脉冲数
-                          DIR_RIGHT);    // 方向 (1:正向, 0:反向)
+step_move_start_pwm(&step2,
+                    6400,
+                    DIR_RIGHT,
+                    Decelerate_USE);
 ```
+
+固定三段脉冲数规划：
+
+```c
+step_move_start_pwm_fixed(&step2,
+                          12000,
+                          4000,
+                          4000,
+                          4000,
+                          DIR_RIGHT);
+```
+
+固定三段模式要求：
+
+```text
+totalPulse = accPulse + constPulse + decPulse
+```
+
+否则 `Step_PrefillFixed()` 会返回 `-1`。
 
 ### 4. 主循环扫描
 
 ```c
-while(1)
+while (1)
 {
-    os_step_move_scan();  // 扫描并填充缓冲区
+    os_step_move_scan();
 }
 ```
 
-## API接口说明
+`os_step_move_scan()` 检查电机对象的缓冲区就绪标志，并调用 `tmr_pwm_start_dma()` 继续输出下一段脉冲。
 
-### 核心函数
+## 常用 API
 
-| 函数名                             | 功能描述                 |
-| ------------------------------- | -------------------- |
-| `Step_Init()`                   | 初始化步进电机控制结构体         |
-| `Step_Prefill()`                | 预填充缓冲区，启动电机（Tacc模式）  |
-| `Step_PrefillFixed()`           | 预填充缓冲区，启动电机（固定分段模式）  |
-| `Step_BuffFill()`               | 运行时填充缓冲区             |
-| `Step_BufferUsed()`             | 缓冲区使用完成回调            |
-| `Step_Abort()`                  | 中止电机运行               |
-| `Step_Lock()` / `Step_Unlock()` | 锁定/解锁电机控制            |
-| `step_move_start_pwm()`         | 启动步进电机PWM运行（Tacc模式）  |
-| `step_move_start_pwm_fixed()`   | 启动固定脉冲分段模式的步进电机PWM运行 |
+| API                                 | 说明                               |
+| ----------------------------------- | ---------------------------------- |
+| `Step_Init()`                     | 初始化步进电机控制对象             |
+| `Step_Prefill()`                  | 按 `Tacc` 模式预填充缓冲区       |
+| `Step_PrefillFixed()`             | 按固定三段脉冲数模式预填充缓冲区   |
+| `Step_BuffFill()`                 | 根据当前运动阶段填充下一段缓冲区   |
+| `Step_BufferUsed()`               | DMA 完成后更新剩余脉冲、位置和状态 |
+| `Step_IsBuffRdy()`                | 判断缓冲区是否已经填充完成         |
+| `Step_GetCurBuffer()`             | 获取当前可发送的缓冲区地址         |
+| `Step_BuffUsedLength()`           | 获取当前缓冲区有效长度             |
+| `Step_Lock()` / `Step_Unlock()` | 运动互斥锁，避免重复启动           |
+| `Step_Abort()`                    | 中止当前运动并关闭定时器           |
+| `step_move_start_pwm()`           | 启动 `Tacc` 自动规划运动         |
+| `step_move_start_pwm_fixed()`     | 启动固定三段脉冲数运动             |
 
-### 辅助函数
+## 硬件资源
 
-| 函数名                          | 功能描述             |
-| ---------------------------- | ---------------- |
-| `Step_IsBuffRdy()`           | 检查缓冲区是否就绪        |
-| `Step_GetCurBuffer()`        | 获取当前缓冲区指针        |
-| `Step_BuffUsedLength()`      | 获取缓冲区使用长度        |
-| `Step_FillAccelerate()`      | 填充加速阶段脉冲（Tacc模式） |
-| `Step_FillConstant()`        | 填充匀速阶段脉冲（Tacc模式） |
-| `Step_FillDecelerate()`      | 填充减速阶段脉冲（Tacc模式） |
-| `Step_FillAccelerateFixed()` | 填充加速阶段脉冲（固定分段模式） |
-| `Step_FillConstantFixed()`   | 填充匀速阶段脉冲（固定分段模式） |
-| `Step_FillDecelerateFixed()` | 填充减速阶段脉冲（固定分段模式） |
+根目录 `code/` 中的默认 AT32 BSP 示例使用如下资源：
 
-## 运行效果
+| 电机对象  | PWM 输出     | DMA 通道          | 方向 GPIO               |
+| --------- | ------------ | ----------------- | ----------------------- |
+| `step2` | `TMR2_CH2` | `DMA1_CHANNEL6` | 由 `Step_Init()` 指定 |
+| `step3` | `TMR5_CH3` | `DMA1_CHANNEL7` | 由 `Step_Init()` 指定 |
 
-使用saleae logic 捕捉波形并导出digit.csv波形，使用我提供的matlab脚本分析波形,即可查看频率波形。
-该效果代码为
+实际引脚、定时器、DMA 请求映射需要根据芯片手册和工程配置调整。移植时重点检查：
+
+- 定时器输入时钟是否与 `RCC_MAX_FREQUENCY` 一致。
+- PWM 通道是否正确配置为复用输出。
+- DMA 请求是否绑定到对应定时器通道。
+- DMA 中断中是否按顺序调用 `Step_BufferUsed()` 和 `Step_BuffFill()`。
+- 方向 GPIO 电平是否与驱动器 DIR 极性一致。
+
+## 示例工程
+
+### AT32F403ARGT7
+
+路径：`example/AT32F403ARGT7`
+
+该工程使用 AT32 标准外设库，包含 BSP、驱动、系统初始化和 Keil MDK 工程文件，可作为根目录 `code/` 的完整验证工程。
+
+### STM32F407VGT6
+
+路径：`example/STM32F407VGT6`
+
+该工程为 STM32F407 HAL 移植示例，包含 `Step/` 中的 S 曲线控制代码、CubeMX 工程文件和 Keil 工程文件。相关移植说明见：
+
+```text
+example/STM32F407VGT6/Step/Docs/步进电机S曲线HAL移植技术总结.md
+```
+
+## 波形与频率分析
+
+可使用 Saleae Logic 等逻辑分析仪采集 PUL 引脚波形，并导出为 CSV。将 CSV 放到 `matlab/` 目录后运行：
+
+```matlab
+frequency_curve
+```
+
+脚本会自动寻找存在跳变的数字通道，计算相邻上升沿周期，并绘制原始数字波形和频率曲线。
+
+示例运动参数：
+
 ```c
-  Step_Init(&step2,TMR2,TMR_SELECT_CHANNEL_2,GPIOB,GPIO_PINS_1,2000,8000,100);
-  step_move_start_pwm_fixed(&step2, 12000, 4000, 4000, 4000, 1);
-```
-![image](https://github.com/Z1R343L-D77/Stepper-motor-algorithm-controller/blob/main/img/curve.png?raw=true)
-
-## 示例代码
-
-完整示例参见 `main.c`：
-
-```c
-int main(void)
-{
-    // 初始化
-    bsp_step_init();
-    Step_Init(&step2, TMR2, TMR_SELECT_CHANNEL_2, GPIOB, GPIO_PINS_1, 500, 8000, 500);
-    Step_Init(&step3, TMR5, TMR_SELECT_CHANNEL_3, GPIOA, GPIO_PINS_3, 500, 8000, 500);
-    
-    // Tacc自动规划模式启动
-    step_move_start_pwm(&step2, 6400, DIR_RIGHT, Decelerate_USE);
-    
-    // 固定脉冲分段模式启动
-    step_move_start_pwm_fixed(&step3, 32000, 5000, 22000, 5000, DIR_RIGHT);
-    
-    // 主循环
-    while(1)
-    {
-        os_step_move_scan();
-    }
-}
+Step_Init(&step2, TMR2, TMR_SELECT_CHANNEL_2, GPIOB, GPIO_PINS_1, 2000, 8000, 100);
+step_move_start_pwm_fixed(&step2, 12000, 4000, 4000, 4000, DIR_RIGHT);
 ```
 
-## 文件结构
+输出频率曲线示例：
 
-```
-Stepper-motor-algorithm-controller/
-├── code/    
-│   ├── bsp/
-│   │    ├── bsp_step.c  # 硬件抽象层实现
-│   │    └── bsp_step.h  # 硬件抽象层头文件
-│   ├── drv/
-│   │    ├── drv_step.c  # 算法驱动层实现
-│   │    └── drv_step.h  # 算法驱动层头文件
-│   └── main.c           # 主程序示例
-├── README.md            # 项目说明文档
-└── LICENSE              # 许可证文件
-```
+![frequency curve](img/curve.png)
 
-## 技术参数
+## 移植建议
 
-- **脉冲频率范围**：500Hz \~ 8000Hz（可配置）
-- **缓冲区大小**：512个脉冲（可配置）
-- **支持电机数量**：受限于定时器和DMA资源
-- **加速时间**：可配置（典型值500ms）
-- **控制精度**：基于定时器PWM，精度取决于时钟频率
-
-## 性能特点
-
-- **低CPU占用**：DMA传输脉冲，CPU仅负责缓冲区填充
-- **高实时性**：双缓冲机制确保脉冲连续输出
-- **平滑运动**：S曲线算法减少机械冲击
-- **灵活配置**：支持多种速度曲线和参数组合
+1. 先确认目标 MCU 的定时器时钟、PWM 通道和 DMA request 映射。
+2. 在 BSP 层实现 `bsp_step_init()`、`tmr_pwm_start_dma()` 和 DMA 中断处理。
+3. 保持驱动层 `drv_step.c/.h` 尽量不依赖具体芯片，只在 BSP 中处理寄存器和外设库差异。
+4. 如果低速频率下定时器分频值超出范围，调整定时器预分频或 `RCC_MAX_FREQUENCY`。
+5. 初次调试建议降低 `Fmax` 和加速度，确认方向、脉冲数、停止逻辑正常后再提高速度。
+6. 多电机同时运行时，需要评估 DMA 资源、中断频率和 CPU 填充缓冲区的实时性。
 
 ## 注意事项
 
-1. 确保定时器和DMA资源未被其他外设占用
-2. 根据电机特性调整最小/最大频率和加速时间
-3. 缓冲区大小应根据系统负载和实时性要求调整
-4. 多电机同时运行时需注意总脉冲频率限制
-5. 方向控制GPIO需正确配置为输出模式
-
-## 许可证
-
-Copyright (c) 2025, Artery Technology, All rights reserved.
-
-本软件按"原样"提供，不提供任何明示或暗示的保证。详见LICENSE文件。
+- `Step_Prefill()` / `Step_PrefillFixed()` 会加锁，同一电机运行未结束前再次启动会失败。
+- `Step_Abort()` 会停止定时器并解锁，可用于急停或异常恢复。
+- 方向引脚在运动启动前设置；如实际方向相反，可交换 DIR 极性或修改方向宏。
+- 固定三段模式下，三段脉冲数之和必须等于总脉冲数。
+- DMA 完成中断中需要及时填充下一段缓冲区，否则高速运行时可能出现脉冲间断。
+- example并非使用本算法库，而是更精细化的S曲线算法
 
 ## 参考项目
 
-本项目参考了以下开源项目：
-
-- [ZheWana/2023-Work-training-competition-software](https://github.com/ZheWana/2023-Work-training-competition-software/tree/master/Controler/UserCode/StepHelper) - 步进电机算法核心实现
-- 本项目的HAL库形式可参考如上链接
+- [ZheWana/2023-Work-training-competition-software](https://github.com/ZheWana/2023-Work-training-competition-software/tree/master/Controler/UserCode/StepHelper)
 
 ## 作者
 
 Z1R343L
 
-## 版本历史
+## 许可证
 
-- v1.2.2 - 优化频率分析脚本，新增自定义频率范围过滤、交互式视图缩放和键盘快捷键支持
-- v1.2.1 - 新增分析频率曲线的matlab脚本，配合saleae logic 2与逻辑分析仪使用 
-- v1.2.0 - 优化os\_step\_move\_scan函数，简化电机启动流程，采取DMA中断填充Step_BuffFill函数，以防止脉冲丢失
-- v1.1.0 - 新增固定脉冲分段模式，支持精确控制加速/匀速/减速各阶段脉冲数
-- v1.0.0 - 初始版本，支持梯形/S曲线加速和DMA双缓冲
+本项目使用 GPL-3.0 许可证，详见 [LICENSE](LICENSE)。
 
+## 版本记录
+
+- `v1.2.2`：优化频率分析脚本，新增自定义频率范围过滤、交互式视图缩放和快捷键支持。
+- `v1.2.1`：新增 MATLAB 频率曲线分析脚本，配合逻辑分析仪 CSV 数据验证输出。
+- `v1.2.0`：优化 `os_step_move_scan()`，通过 DMA 中断填充缓冲区，减少脉冲丢失风险。
+- `v1.1.0`：新增固定脉冲分段模式，支持精确控制加速、匀速、减速各阶段脉冲数。
+- `v1.0.0`：初始版本，支持梯形 / S 曲线加减速和 DMA 双缓冲输出。
